@@ -160,13 +160,19 @@ phase_create_user() {
     log "User created. Temporary password set (not needed for service operation)."
   fi
 
-  # Ensure home directory exists (only chown home dir if we just created the user)
+  # Ensure home directory exists and user can write to it
   if [[ ! -d "$OPENCLAW_HOME" ]]; then
     createhomedir -c -u "$OPENCLAW_USER" 2>/dev/null || mkdir -p "$OPENCLAW_HOME"
     chown "$OPENCLAW_USER":staff "$OPENCLAW_HOME"
-  elif [[ "$user_existed" == false ]]; then
-    # User was just created, safe to set ownership on home
-    chown "$OPENCLAW_USER":staff "$OPENCLAW_HOME"
+  else
+    # Home exists — ensure user owns it (non-recursive, safe for existing users)
+    # This fixes cases where user was demoted from admin and ownership is broken
+    local home_owner
+    home_owner=$(stat -f '%Su' "$OPENCLAW_HOME")
+    if [[ "$home_owner" != "$OPENCLAW_USER" ]]; then
+      warn "Home directory owned by '$home_owner', fixing to '$OPENCLAW_USER'..."
+      chown "$OPENCLAW_USER":staff "$OPENCLAW_HOME"
+    fi
   fi
 
   # Verify NOT admin (security check)
@@ -235,8 +241,7 @@ phase_prerequisites() {
     log "nvm already installed for $OPENCLAW_USER."
   else
     info "Installing nvm ${NVM_VERSION} for $OPENCLAW_USER..."
-    sudo -u "$OPENCLAW_USER" bash -c \
-      "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh | bash"
+    as_openclaw "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh | bash"
     log "nvm installed."
   fi
 
