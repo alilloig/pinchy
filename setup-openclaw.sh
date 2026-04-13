@@ -6,7 +6,8 @@ set -euo pipefail
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-OPENCLAW_USER="openclaw"
+# User can be overridden via --user flag or OPENCLAW_USER env var
+OPENCLAW_USER="${OPENCLAW_USER:-openclaw}"
 OPENCLAW_HOME="/Users/${OPENCLAW_USER}"
 OPENCLAW_DIR="${OPENCLAW_HOME}/.openclaw"
 STATE_FILE="${OPENCLAW_DIR}/.setup-state"
@@ -15,6 +16,13 @@ OLLAMA_PORT=11434
 NVM_VERSION="v0.40.3"
 NODE_MAJOR=22
 MIN_DISK_GB=5
+
+# Recalculate derived paths after --user override
+recalculate_paths() {
+  OPENCLAW_HOME="/Users/${OPENCLAW_USER}"
+  OPENCLAW_DIR="${OPENCLAW_HOME}/.openclaw"
+  STATE_FILE="${OPENCLAW_DIR}/.setup-state"
+}
 
 # ── Color / output helpers ───────────────────────────────────────────────────
 
@@ -87,7 +95,11 @@ phase_preflight() {
 
   # Root check
   if [[ $EUID -ne 0 ]]; then
-    fatal "This script must be run as root. Use: sudo ./setup-openclaw.sh"
+    error "This script must be run as root."
+    info "Requirement: An admin account that can use sudo."
+    info "If your account is non-admin, ask an admin to run:"
+    info "  sudo ./setup-openclaw.sh --user $(whoami)"
+    exit 1
   fi
 
   # Architecture
@@ -131,10 +143,12 @@ phase_preflight() {
 
 phase_create_user() {
   phase_done "create_user" && { info "User '$OPENCLAW_USER' already set up."; return 0; }
-  header "Phase 1: Create dedicated '$OPENCLAW_USER' macOS user"
+  header "Phase 1: Configure user '$OPENCLAW_USER'"
 
+  local user_existed=false
   if dscl . -read "/Users/$OPENCLAW_USER" &>/dev/null; then
-    log "User '$OPENCLAW_USER' already exists. Verifying..."
+    user_existed=true
+    log "User '$OPENCLAW_USER' already exists. Using existing account."
   else
     local tmp_pass
     tmp_pass=$(openssl rand -base64 12)
@@ -146,13 +160,16 @@ phase_create_user() {
     log "User created. Temporary password set (not needed for service operation)."
   fi
 
-  # Ensure home directory
+  # Ensure home directory exists (only chown home dir if we just created the user)
   if [[ ! -d "$OPENCLAW_HOME" ]]; then
     createhomedir -c -u "$OPENCLAW_USER" 2>/dev/null || mkdir -p "$OPENCLAW_HOME"
     chown "$OPENCLAW_USER":staff "$OPENCLAW_HOME"
+  elif [[ "$user_existed" == false ]]; then
+    # User was just created, safe to set ownership on home
+    chown "$OPENCLAW_USER":staff "$OPENCLAW_HOME"
   fi
 
-  # Verify NOT admin
+  # Verify NOT admin (security check)
   if dseditgroup -o checkmember -m "$OPENCLAW_USER" admin &>/dev/null; then
     warn "User '$OPENCLAW_USER' is in the admin group. Removing for security..."
     dseditgroup -o edit -d "$OPENCLAW_USER" -t user admin
@@ -160,8 +177,10 @@ phase_create_user() {
   log "User '$OPENCLAW_USER' is a standard (non-admin) account."
 
   # Ensure .openclaw directory exists with correct ownership
+  # NOTE: Only chown the .openclaw directory, NOT the entire home directory.
+  # Recursive chown on home would fail on TCC-protected ~/Library paths.
   mkdir -p "$OPENCLAW_DIR"
-  chown -R "$OPENCLAW_USER":staff "$OPENCLAW_HOME"
+  chown -R "$OPENCLAW_USER":staff "$OPENCLAW_DIR"
 
   mark_done "create_user"
 }
@@ -674,13 +693,48 @@ phase_verify() {
 # ═════════════════════════════════════════════════════════════════════════════
 
 main() {
+  local preflight_only=false
+
+  # Parse command-line arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --user)
+        if [[ -z "${2:-}" ]]; then
+          fatal "--user requires a username argument"
+        fi
+        OPENCLAW_USER="$2"
+        recalculate_paths
+        shift 2
+        ;;
+      --preflight-only)
+        preflight_only=true
+        shift
+        ;;
+      -h|--help)
+        echo "Usage: sudo ./setup-openclaw.sh [OPTIONS]"
+        echo ""
+        echo "Options:"
+        echo "  --user USERNAME    Use existing user instead of creating 'openclaw'"
+        echo "  --preflight-only   Run preflight checks only, don't install"
+        echo "  -h, --help         Show this help message"
+        exit 0
+        ;;
+      *)
+        fatal "Unknown option: $1. Use --help for usage."
+        ;;
+    esac
+  done
+
   echo ""
   printf '%b\n' "${BOLD}OpenClaw Setup for Intel Mac Mini${NC}"
   printf "Targeting macOS Monterey • Groq + Gemini + Ollama • Telegram\n"
+  if [[ "$OPENCLAW_USER" != "openclaw" ]]; then
+    info "Using existing user: $OPENCLAW_USER"
+  fi
   echo ""
 
   # --preflight-only flag for dry testing
-  if [[ "${1:-}" == "--preflight-only" ]]; then
+  if [[ "$preflight_only" == true ]]; then
     phase_preflight
     log "Preflight passed. Exiting without installing."
     exit 0

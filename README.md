@@ -70,12 +70,24 @@ To test prerequisites without installing anything:
 sudo ./setup-openclaw.sh --preflight-only
 ```
 
+### Using an existing user account
+
+By default, the script creates a dedicated `openclaw` user. To use your existing account instead:
+
+```bash
+sudo ./setup-openclaw.sh --user yourusername
+```
+
+**Note**: Using a personal account means OpenClaw shares your user's permissions. The dedicated `openclaw` user provides better security isolation.
+
+If your account is non-admin, ask an admin to run the command above on your behalf.
+
 ## What happens at each phase
 
 | Phase | What it does | Interactive? |
 |-------|-------------|--------------|
 | 0. Preflight | Checks macOS version, architecture, network, disk space | No |
-| 1. Create user | Creates `openclaw` standard (non-admin) macOS user | No |
+| 1. Configure user | Creates `openclaw` user or configures existing user (with `--user`) | No |
 | 2. Prerequisites | Installs Xcode CLT, Homebrew, nvm, Node.js 22, git | **Yes** — Xcode CLT shows a system dialog (click Install, then Agree) |
 | 3. Tailscale | Installs and authenticates Tailscale | **Yes** — paste auth key or open login URL in browser |
 | 4. Ollama | Installs Ollama, pulls Qwen 3 1.7B model | No (downloads ~1.2GB) |
