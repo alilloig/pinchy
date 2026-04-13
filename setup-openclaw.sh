@@ -85,6 +85,16 @@ as_openclaw() {
   sudo -u "$OPENCLAW_USER" -i bash -c "$*"
 }
 
+# ── Run a command as the invoking admin user (for Homebrew) ──────────────────
+# Homebrew refuses to run as root, so we use SUDO_USER (the user who ran sudo)
+
+as_admin() {
+  if [[ -z "${SUDO_USER:-}" ]]; then
+    fatal "SUDO_USER not set. Run this script with: sudo ./setup-openclaw.sh"
+  fi
+  sudo -u "$SUDO_USER" bash -c "$*"
+}
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Phase 0 — Preflight
 # ═════════════════════════════════════════════════════════════════════════════
@@ -213,14 +223,13 @@ phase_prerequisites() {
     log "Xcode CLT installed."
   fi
 
-  # ── Homebrew ──
+  # ── Homebrew (must run as non-root user) ──
   if command -v brew &>/dev/null; then
     log "Homebrew already installed. Updating..."
-    brew update 2>/dev/null || true
+    as_admin "brew update" 2>/dev/null || true
   else
     info "Installing Homebrew (non-interactive)..."
-    NONINTERACTIVE=1 /bin/bash -c \
-      "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    as_admin "NONINTERACTIVE=1 /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
     log "Homebrew installed."
   fi
   # Ensure brew is on PATH for this session (Intel: /usr/local/bin)
@@ -231,7 +240,7 @@ phase_prerequisites() {
     log "git already available: $(git --version)"
   else
     info "Installing git..."
-    brew install git
+    as_admin "brew install git"
     log "git installed."
   fi
 
@@ -272,14 +281,14 @@ phase_tailscale() {
     log "Tailscale already installed."
   else
     info "Installing Tailscale via Homebrew..."
-    brew install tailscale
+    as_admin "brew install tailscale"
     log "Tailscale installed."
   fi
 
   # Start the daemon
   if ! pgrep -x tailscaled &>/dev/null; then
     info "Starting tailscaled..."
-    brew services start tailscale 2>/dev/null || true
+    as_admin "brew services start tailscale" 2>/dev/null || true
     sleep 3
   fi
 
@@ -328,7 +337,7 @@ phase_ollama() {
     log "Ollama already installed."
   else
     info "Installing Ollama via Homebrew..."
-    brew install ollama
+    as_admin "brew install ollama"
     log "Ollama installed."
   fi
 
@@ -346,7 +355,7 @@ ENVEOF
   # Start Ollama
   if ! curl -sf --max-time 5 "http://localhost:${OLLAMA_PORT}/api/tags" &>/dev/null; then
     info "Starting Ollama service..."
-    brew services start ollama 2>/dev/null || true
+    as_admin "brew services start ollama" 2>/dev/null || true
     # Wait for API to be ready
     local tries=0
     while ! curl -sf --max-time 3 "http://localhost:${OLLAMA_PORT}/api/tags" &>/dev/null; do
