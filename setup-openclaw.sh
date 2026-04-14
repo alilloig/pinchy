@@ -292,10 +292,21 @@ phase_tailscale() {
     sleep 3
   fi
 
+  # Verify tailscaled is running before attempting auth
+  local daemon_tries=0
+  while ! tailscale status &>/dev/null 2>&1; do
+    (( daemon_tries++ ))
+    if (( daemon_tries > 10 )); then
+      error "tailscaled daemon not responding. Checking status..."
+      as_admin "brew services list" | grep tailscale || true
+      fatal "Cannot connect to tailscaled. Try: brew services restart tailscale"
+    fi
+    info "Waiting for tailscaled to start..."
+    sleep 2
+  done
+
   # Check if already authenticated
-  if tailscale status &>/dev/null 2>&1; then
-    log "Tailscale already authenticated and running."
-  else
+  if tailscale status 2>&1 | grep -q "Tailscale is stopped"; then
     echo ""
     info "Tailscale needs authentication."
     printf "    Do you have a pre-generated Tailscale auth key?\n"
@@ -304,15 +315,21 @@ phase_tailscale() {
     echo ""
 
     if [[ -n "$ts_key" ]]; then
-      tailscale up --auth-key "$ts_key"
+      tailscale up --auth-key "$ts_key" || fatal "Tailscale auth failed. Check your auth key."
     else
       info "Opening Tailscale login. A URL will appear — open it in a browser on any device."
-      tailscale up
+      info "After authenticating in browser, the script will continue automatically."
+      echo ""
+      # Run in foreground, show output to user
+      if ! tailscale up 2>&1; then
+        error "Tailscale up failed. You can retry manually with: sudo tailscale up"
+        fatal "Tailscale authentication failed."
+      fi
     fi
 
     # Wait for connection
     local tries=0
-    while ! tailscale status &>/dev/null 2>&1; do
+    while ! tailscale status 2>&1 | grep -qE "^[0-9]"; do
       (( tries++ ))
       if (( tries > 60 )); then
         fatal "Tailscale did not connect after 5 minutes. Re-run the script to retry."
@@ -320,6 +337,8 @@ phase_tailscale() {
       sleep 5
     done
     log "Tailscale connected."
+  else
+    log "Tailscale already authenticated and running."
   fi
 
   mark_done "tailscale"
